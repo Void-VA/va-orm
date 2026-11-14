@@ -49,11 +49,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/fazza-abiyyu/ExnestJs-Starter.git",
-    "directory": "engine/va-orm"
+    "url": "https://github.com/Void-VA/va-orm.git"
   },
-  "homepage": "https://github.com/fazza-abiyyu/ExnestJs-Starter/tree/main/engine/va-orm",
-  "bugs": "https://github.com/fazza-abiyyu/ExnestJs-Starter/issues",
+  "homepage": "https://github.com/Void-VA/va-orm",
+  "bugs": "https://github.com/Void-VA/va-orm/issues",
   "keywords": [
     "orm",
     "postgres",

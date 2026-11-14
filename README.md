@@ -109,6 +109,6 @@ va db pull                         # introspect DB → schema
 
 ## Links
 
-- Repository: https://github.com/fazza-abiyyu/ExnestJs-Starter/tree/main/engine/va-orm
-- Issues: https://github.com/fazza-abiyyu/ExnestJs-Starter/issues
+- Repository: https://github.com/Void-VA/va-orm
+- Issues: https://github.com/Void-VA/va-orm/issues
 - License: MIT
