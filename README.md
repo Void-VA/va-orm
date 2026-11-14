@@ -111,4 +111,4 @@ va db pull                         # introspect DB → schema
 
 - Repository: https://github.com/Void-VA/va-orm
 - Issues: https://github.com/Void-VA/va-orm/issues
-- License: MIT
+- License: Apache-2.0
