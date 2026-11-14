@@ -107,6 +107,30 @@ va db push [--dry-run]             # diff schema → DB (creates + alters drift)
 va db pull                         # introspect DB → schema
 ```
 
+## Releasing
+
+Publishing runs in CI via npm trusted publishing (OIDC) — no tokens in repo
+secrets. Bump `version` in `package.json`, then push a matching tag:
+
+```sh
+git tag v0.1.0-beta.10
+git push origin v0.1.0-beta.10
+```
+
+`.github/workflows/publish.yml` then runs typecheck → tests → build and stages
+the package with `npm stage publish` (the trusted publisher is configured for
+staged publishing only). Finish the release by approving the staged version
+with 2FA:
+
+```sh
+npm stage list @v-va/orm
+npm stage approve <stage-id>
+```
+
+Or approve it at https://www.npmjs.com → Staged Packages. Enabling **Allow
+npm publish** and **Allow npm dist-tag** on the trusted publisher lets CI
+publish and tag directly instead.
+
 ## Links
 
 - Repository: https://github.com/Void-VA/va-orm

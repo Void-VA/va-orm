@@ -56,10 +56,15 @@ jobs:
       # No NPM_TOKEN: npm exchanges the GitHub OIDC token for a short-lived
       # publish credential. Configure the trusted publisher on npmjs.com:
       #   repository Void-VA/va-orm · workflow publish.yml
-      - name: Publish
+      # Trusted publisher created after 2026-09-03 only allows `npm stage publish`
+      # by default. Enabling "Allow npm publish" on npmjs.com lets this step be
+      # plain `npm publish` instead — see README "Releasing".
+      - name: Stage publish
+        run: npm stage publish
+
+      - name: How to finish
         run: |
-          VERSION=$(node -p "require('./package.json').version")
-          npm publish --access public
-          case "$VERSION" in
-            *-*) npm dist-tag add "@v-va/orm@$VERSION" beta ;;
-          esac
+          echo "::notice::Package staged. Approve it with 2FA to publish:"
+          echo "  npm stage list @v-va/orm"
+          echo "  npm stage approve <stage-id>"
+          echo "  (or https://www.npmjs.com -> Staged Packages)"
