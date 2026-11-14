@@ -59,8 +59,10 @@ jobs:
       # Trusted publisher created after 2026-09-03 only allows `npm stage publish`
       # by default. Enabling "Allow npm publish" on npmjs.com lets this step be
       # plain `npm publish` instead — see README "Releasing".
+      # Prereleases require an explicit --tag; we publish them to latest so the
+      # npm page and `npm i` pick up the new build.
       - name: Stage publish
-        run: npm stage publish
+        run: npm stage publish --tag latest
 
       - name: How to finish
         run: |

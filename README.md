@@ -132,6 +132,14 @@ Or approve it at https://www.npmjs.com → Staged Packages. Enabling **Allow
 npm publish** and **Allow npm dist-tag** on the trusted publisher lets CI
 publish and tag directly instead.
 
+The staged version is tagged `latest` (prereleases need an explicit `--tag`).
+To keep the `beta` tag in step, either grant **Allow npm dist-tag** and let CI
+run `npm dist-tag add`, or after `npm login` run it locally:
+
+```sh
+npm dist-tag add "@v-va/orm@$VERSION" beta
+```
+
 ## Links
 
 - Repository: https://github.com/Void-VA/va-orm

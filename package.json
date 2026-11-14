@@ -7,7 +7,7 @@
   "module": "./packages/client/dist/index.js",
   "types": "./packages/client/dist/index.d.ts",
   "bin": {
-    "va": "./packages/cli/dist/bin/va.js"
+    "va": "packages/cli/dist/bin/va.js"
   },
   "exports": {
     ".": {
