@@ -113,8 +113,9 @@ Publishing runs in CI via npm trusted publishing (OIDC) — no tokens in repo
 secrets. Bump `version` in `package.json`, then push a matching tag:
 
 ```sh
-git tag v0.1.0-beta.10
-git push origin v0.1.0-beta.10
+VERSION=$(node -p "require('./package.json').version")
+git tag "v$VERSION"
+git push origin "v$VERSION"
 ```
 
 `.github/workflows/publish.yml` then runs typecheck → tests → build and stages
