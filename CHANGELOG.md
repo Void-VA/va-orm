@@ -3,6 +3,25 @@
 All notable changes to `@v-va/orm` are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.2]
+
+### Fixed
+
+- **`http` driver (SQL-over-HTTP) restored**: `driver: 'http'` executes SQL
+  through an HTTP endpoint instead of a TCP connection — for serverless
+  environments (Vercel/Workers) where direct Postgres connections are not
+  possible. Zero-dependency (`fetch`), with protocol profiles for `generic`,
+  Neon, Prisma Accelerate, Cloudflare D1, and Turso/libSQL (including baton
+  sessions for interactive transactions). Remote dialect (`postgres` /
+  `sqlite`) and placeholder style are resolved synchronously so quoting and
+  `$n`/`?` params always match the server engine. Shipped in `0.1.0-beta.9`,
+  dropped from the build in `beta.10`, restored here — `0.1.1` consumers that
+  import `HttpDriver` or pass `driver: 'http'` need this version.
+- **Stale build output no longer ships**: `tsup` left orphaned chunks in
+  `dist/` across rebuilds (four `va.client-*.d.ts`, ~23 obsolete `.js`), and
+  `files[]` publishes the whole tree. `prebuild` now removes both `dist`
+  directories first, so the tarball contains exactly what the build emitted.
+
 ## [0.1.1]
 
 ### Fixed

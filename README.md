@@ -96,6 +96,30 @@ import { createVaSingleton } from '@v-va/orm/elysia';
 const va = createVaSingleton({ driver: 'postgres', dsn: process.env.DATABASE_URL! });
 ```
 
+SQL over HTTP — for serverless runtimes where no TCP socket to Postgres is
+possible. Same client, same repositories, transport swapped underneath:
+
+```ts
+import { VaClient, HttpDriver } from '@v-va/orm';
+
+const va = VaClient.create({
+  driver: 'http',
+  dsn: process.env.VA_HTTP_URL!, // e.g. .../sql
+  http: {
+    protocol: 'generic', // generic | neon | accelerate | d1 | turso
+    dialect: 'postgres', // remote engine
+    authToken: process.env.VA_HTTP_TOKEN,
+    headers: { 'CF-Access-Client-Id': process.env.CF_ID! },
+  },
+  models: { user: { tableName: 'users' } },
+});
+```
+
+Remote dialect and placeholder style (`$1` vs `?`) are resolved from the
+protocol, so quoting stays correct. Interactive transactions need a
+session-capable protocol (`turso`); stateless ones throw instead of silently
+running writes without a rollback path.
+
 ## CLI
 
 ```sh

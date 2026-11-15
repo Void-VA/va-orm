@@ -30,5 +30,21 @@ export * from './pagination/adapters/graphql.adapter.js';
 
 export { VaClient } from './core/va.client.js';
 export type { VaClientOptions } from './core/va.client.js';
+
+// Process-wide singleton — framework-agnostic, so it is exported from the root
+// too. `@v-va/orm/elysia` re-exports the same function plus `vaPlugin`; importing
+// that subpath never pulls in `elysia` itself, the name only reflects the plugin
+// shape (`{ name, start, stop }`) it also ships.
+export { VaSingleton, createVaSingleton } from './integrations/elysia/va.singleton.js';
 export type { SchemaAST } from '../../schema/src/schema.types.js';
 export { VaError } from './core/errors.js';
+
+export { HttpDriver } from './drivers/http/http.driver.js';
+export {
+  HTTP_PROFILES,
+  detectHttpProtocol,
+  resolveHttpProfile,
+  encodeTursoValue,
+  decodeTursoValue,
+} from './drivers/http/http.protocols.js';
+export type { HttpProtocolProfile } from './drivers/http/http.protocols.js';

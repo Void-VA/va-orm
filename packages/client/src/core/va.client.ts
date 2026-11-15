@@ -3,7 +3,9 @@
 import type {
   DatabaseDriver,
   DriverType,
+  SqlDialect,
   ConnectionConfig,
+  HttpClientOptions,
   ModelMeta,
   RelationMeta,
   TransactionOptions,
@@ -13,6 +15,7 @@ import { resolveRelations } from '../../../schema/src/schema.relations.js';
 import { tableNameOf } from '../../../schema/src/schema.mapping.js';
 import { quoterFor } from '../relation/quote.js';
 import type { QuoteFn } from '../relation/quote.js';
+import { detectHttpProtocol, resolveHttpProfile } from '../drivers/http/http.protocols.js';
 import { ConnectionPool } from './connection.pool.js';
 import { Repository } from '../repository/repository.js';
 import { ModelDelegate } from '../repository/model.delegate.js';
@@ -35,6 +38,8 @@ export interface VaClientOptions {
   dsn: string;
   pooling?: boolean;
   connection?: ConnectionConfig;
+  /** Opsi transport http — dipakai saat `driver: 'http'`. */
+  http?: HttpClientOptions;
   models?: Record<string, { tableName: string; softDelete?: boolean } & { primaryKey?: string }>;
   schema?: SchemaAST;
   modelOptions?: Record<string, VaClientModelOptions>;
@@ -62,10 +67,42 @@ export class VaClient {
   private rawQuery: RawQuery;
   private middleware = new QueryMiddleware();
   private events = new EventEmitter();
+  /**
+   * Dialect SQL yang benar-benar dipakai. Untuk `driver: 'http'` ini adalah
+   * dialect engine remote (postgres/sqlite), bukan transport-nya.
+   */
+  private effectiveDialect: SqlDialect;
+  /**
+   * Gaya placeholder yang harus cocok dengan driver.
+   *
+   * Penting: placeholder harus diketahui **sinkron** — Repository menyusun SQL
+   * sebelum pool selesai membuat driver pertamanya, jadi placeholder tidak
+   * boleh diambil dari instance driver di dalam pool.
+   */
+  private placeholderStyle: 'numbered' | 'positional';
 
   constructor(private options: VaClientOptions) {
+    if (options.driver === 'http') {
+      // Resolve profile yang sama persis dengan yang dipakai HttpDriver,
+      // supaya dialect + placeholder tidak pernah meleset.
+      const http = options.http ?? options.connection?.http ?? {};
+      const profile = resolveHttpProfile({
+        ...http,
+        protocol: http.protocol ?? detectHttpProtocol(options.dsn),
+      });
+      this.effectiveDialect = profile.dialect;
+      this.placeholderStyle = profile.placeholder;
+    } else {
+      this.effectiveDialect = options.driver;
+      this.placeholderStyle = options.driver === 'postgres' ? 'numbered' : 'positional';
+    }
+
     if (options.pooling !== false) {
-      this.pool = new ConnectionPool(options.driver, options.dsn, options.connection);
+      const connection: ConnectionConfig = {
+        ...options.connection,
+        http: options.http ?? options.connection?.http,
+      };
+      this.pool = new ConnectionPool(options.driver, options.dsn, connection);
       this.driver = this.createDriverProxy();
     } else {
       this.driver = this.createDirectDriver();
@@ -127,16 +164,20 @@ export class VaClient {
 
   private createDriverProxy(): DatabaseDriver {
     const pool = this.pool!;
-    const dialect = this.options.driver;
+    const dialect = this.effectiveDialect;
     return {
       query: (sql, params) => pool.query(sql, params),
       execute: (sql, params) => pool.execute(sql, params),
       transaction: (fn) => pool.transaction(fn),
       close: () => pool.close(),
-      getPlaceholder: (index) =>
-        pool['connections'][0]?.driver.getPlaceholder(index) ?? `$${index}`,
+      getPlaceholder: (index) => this.getPlaceholder(index),
       getDialect: () => dialect,
     };
+  }
+
+  /** Placeholder yang dipakai driver ini (`$1` postgres, `?` mysql/sqlite). */
+  private getPlaceholder(index: number): string {
+    return this.placeholderStyle === 'positional' ? '?' : `$${index}`;
   }
 
   private createDirectDriver(): DatabaseDriver {
@@ -152,6 +193,10 @@ export class VaClient {
       case 'sqlite': {
         const { SqliteDriver } = require('../drivers/sqlite/sqlite.driver.js');
         return new SqliteDriver(this.options.dsn, this.options.connection);
+      }
+      case 'http': {
+        const { HttpDriver } = require('../drivers/http/http.driver.js');
+        return new HttpDriver(this.options.dsn, this.options.http ?? this.options.connection?.http);
       }
       default:
         throw new Error(`Unsupported driver: ${this.options.driver}`);
@@ -179,7 +224,12 @@ export class VaClient {
     if (!this.delegates.has(name)) {
       this.delegates.set(
         name,
-        new ModelDelegate<T>(this.driver, meta, this.modelRegistry, quoterFor(this.options.driver)),
+        new ModelDelegate<T>(
+          this.driver,
+          meta,
+          this.modelRegistry,
+          quoterFor(this.effectiveDialect),
+        ),
       );
     }
     return this.delegates.get(name) as ModelDelegate<T>;
@@ -204,7 +254,7 @@ export class VaClient {
       }
       this.delegates.set(
         key,
-        new Ctor(this.driver, meta, this.modelRegistry, quoterFor(this.options.driver)),
+        new Ctor(this.driver, meta, this.modelRegistry, quoterFor(this.effectiveDialect)),
       );
     }
     return this.delegates.get(key) as T;

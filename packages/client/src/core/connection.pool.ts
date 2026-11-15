@@ -4,6 +4,7 @@ import type {
   DatabaseDriver,
   DriverType,
   ConnectionConfig,
+  HttpClientOptions,
   PoolStats,
   SlowQueryInfo,
 } from './types.js';
@@ -41,12 +42,14 @@ export class ConnectionPool {
       | 'filename'
       | 'ssl'
       | 'driverFactory'
+      | 'http'
       | 'slowQueryThresholdMs'
       | 'onSlowQuery'
       | 'retryMode'
     >
   > & {
     driverFactory?: (dsn: string) => DatabaseDriver;
+    http?: HttpClientOptions;
     slowQueryThresholdMs?: number;
     onSlowQuery?: (info: SlowQueryInfo) => void;
     retryMode: 'reads' | 'none' | 'all';
@@ -70,14 +73,17 @@ export class ConnectionPool {
   ) {
     this.config = {
       max: options.max ?? 20,
-      min: options.min ?? 2,
+      // Transport http tidak punya "koneksi" — satu instance driver = satu
+      // http client. Slot minimum 1 cukup; jangan buat instance sia-sia.
+      min: options.min ?? (this.driverType === 'http' ? 1 : 2),
       idleTimeoutMs: options.idleTimeoutMs ?? 10000,
       connectionTimeoutMs: options.connectionTimeoutMs ?? 5000,
       maxLifetimeMs: options.maxLifetimeMs ?? 1800000, // 30 minutes
       maxUses: options.maxUses ?? 7500,
       statementTimeoutMs: options.statementTimeoutMs ?? 30000,
       lockTimeoutMs: options.lockTimeoutMs ?? 10000,
-      healthCheck: options.healthCheck ?? true,
+      // untuk transport http, bisa dinyalakan ulang lewat `healthCheck: true`.
+      healthCheck: options.healthCheck ?? this.driverType !== 'http',
       healthCheckIntervalMs: options.healthCheckIntervalMs ?? 30000,
       healthCheckQuery: options.healthCheckQuery ?? this.getDefaultHealthCheckQuery(),
       retryAttempts: options.retryAttempts ?? 3,
@@ -87,6 +93,7 @@ export class ConnectionPool {
       applicationName: options.applicationName ?? 'va-orm',
       disablePreparedStatements: options.disablePreparedStatements ?? false,
       driverFactory: options.driverFactory,
+      http: options.http,
       slowQueryThresholdMs: options.slowQueryThresholdMs,
       onSlowQuery: options.onSlowQuery,
     };
@@ -101,6 +108,8 @@ export class ConnectionPool {
       case 'mysql':
         return 'SELECT 1';
       case 'sqlite':
+        return 'SELECT 1';
+      case 'http':
         return 'SELECT 1';
     }
   }
@@ -151,6 +160,11 @@ export class ConnectionPool {
         case 'sqlite': {
           const { SqliteDriver } = await import('../drivers/sqlite/sqlite.driver.js');
           driver = new SqliteDriver(this.dsn);
+          break;
+        }
+        case 'http': {
+          const { HttpDriver } = await import('../drivers/http/http.driver.js');
+          driver = new HttpDriver(this.dsn, this.config.http);
           break;
         }
         default:

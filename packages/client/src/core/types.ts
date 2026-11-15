@@ -2,7 +2,19 @@
 
 // ============ DRIVER ============
 
-export type DriverType = 'postgres' | 'mysql' | 'sqlite';
+/** SQL dialect yang dipakai engine di sisi server. */
+export type SqlDialect = 'postgres' | 'mysql' | 'sqlite';
+
+/**
+ * Driver selection.
+ *
+ * - `postgres` | `mysql` | `sqlite` → koneksi TCP/file langsung
+ * - `http` → SQL dieksekusi lewat HTTP endpoint (SQL-over-HTTP)
+ *
+ * `getDialect()` pada `DatabaseDriver` selalu mengembalikan `SqlDialect`
+ * (bukan `DriverType`) — driver `http` melaporkan dialect engine remote.
+ */
+export type DriverType = SqlDialect | 'http';
 
 export type ColumnType =
   | 'string'
@@ -36,7 +48,63 @@ export interface DatabaseDriver {
   transaction<T>(fn: (driver: DatabaseDriver) => Promise<T>): Promise<T>;
   close(): Promise<void>;
   getPlaceholder(index: number): string;
-  getDialect(): DriverType;
+  getDialect(): SqlDialect;
+}
+
+// ============ HTTP DRIVER (SQL-over-HTTP) ============
+
+/** Wire protocol yang dipakai endpoint http/https. */
+export type HttpProtocolName = 'generic' | 'neon' | 'accelerate' | 'd1' | 'turso';
+/** Dialect SQL di sisi server untuk transport http. */
+export type HttpSqlDialect = 'postgres' | 'sqlite';
+/** Gaya placeholder: `numbered` → `$1`, `positional` → `?`. */
+export type HttpPlaceholderStyle = 'numbered' | 'positional';
+
+/**
+ * Konteks request untuk builder body kustom.
+ *
+ * - `baton` — handle stream/session terbuka (turso). `null` = buka stream baru.
+ * - `close` — tutup stream setelah statement ini dieksekusi.
+ */
+export interface HttpRequestContext {
+  baton?: string | null;
+  close?: boolean;
+}
+
+/** Hasil mapping response http → rows + rowCount. */
+export interface HttpResponseMapping {
+  rows: any[];
+  rowCount: number;
+  /** Baton baru untuk melanjutkan session (turso). */
+  baton?: string | null;
+}
+
+/**
+ * Opsi driver `http` (SQL over HTTP).
+ *
+ * Zero dependency — memakai global `fetch` (Node 18+, Bun, Workers).
+ */
+export interface HttpClientOptions {
+  /** Wire protocol. Default: dideteksi otomatis dari URL. */
+  protocol?: HttpProtocolName;
+  /** Dialect SQL di server. Default: mengikuti protocol. */
+  dialect?: HttpSqlDialect;
+  /** Gaya placeholder. Default: mengikuti protocol. */
+  placeholder?: HttpPlaceholderStyle;
+  /** Header tambahan (mis. `x-api-key`). */
+  headers?: Record<string, string>;
+  /** Bearer token — dikirim sebagai `Authorization: Bearer <token>`. */
+  authToken?: string;
+  /** Timeout per request (ms). Default: 30000. */
+  timeoutMs?: number;
+  /** Path yang ditambahkan ke base URL (turso: `/v2/pipeline`). */
+  path?: string;
+  /** Implementasi fetch custom (testing / transport lain). */
+  fetch?: typeof globalThis.fetch;
+  /** Override builder body request. */
+  buildBody?: (sql: string, params: any[], ctx: HttpRequestContext) => unknown;
+  /** Override mapper response. */
+  mapResponse?: (body: any) => HttpResponseMapping;
 }
 
 // ============ CONNECTION CONFIG ============
@@ -74,6 +142,8 @@ export interface ConnectionConfig {
   applicationName?: string;
   disablePreparedStatements?: boolean;
   driverFactory?: (dsn: string) => DatabaseDriver;
+  /** Opsi transport http — dipakai saat `driver: 'http'`. */
+  http?: HttpClientOptions;
   slowQueryThresholdMs?: number;
   onSlowQuery?: (info: SlowQueryInfo) => void;
 }

@@ -1,6 +1,6 @@
 {
   "name": "@v-va/orm",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "VA-ORM — lightweight, production-grade TypeScript ORM (PostgreSQL, MySQL, SQLite). Schema-first, zero heavy engine.",
   "type": "module",
   "main": "./packages/client/dist/index.js",
@@ -33,11 +33,14 @@
   },
   "files": [
     "README.md",
+    "CHANGELOG.md",
     "packages/client/dist",
     "packages/cli/dist"
   ],
   "scripts": {
     "va": "bun packages/cli/bin/va.ts",
+    "clean": "node scripts/clean-dist.mjs",
+    "prebuild": "node scripts/clean-dist.mjs",
     "build": "tsup",
     "test": "bun test",
     "typecheck": "tsc --noEmit -p tsconfig.json",

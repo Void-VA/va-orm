@@ -34,4 +34,15 @@ describe('Integrations', () => {
       expect(typeof vaPlugin).toBe('function');
     });
   });
+
+  describe('root entry', () => {
+    it('should re-export the singleton from @v-va/orm', async () => {
+      const root = await import('../index.js');
+      expect(typeof root.createVaSingleton).toBe('function');
+      expect(typeof root.VaSingleton.getInstance).toBe('function');
+      // Same binding as the elysia subpath — one singleton, not two.
+      const elysia = await import('../integrations/elysia/va.singleton.js');
+      expect(root.createVaSingleton).toBe(elysia.createVaSingleton);
+    });
+  });
 });
