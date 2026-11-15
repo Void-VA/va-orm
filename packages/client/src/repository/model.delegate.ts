@@ -14,7 +14,7 @@ import type {
 import { QueryBuilder } from '../core/query-builder.js';
 import { applyWhere } from '../relation/filters.js';
 import { IncludeLoader } from '../relation/include.js';
-import { resolveSelect, stripColumns } from '../relation/select.js';
+import { resolveSelect, stripColumns, defaultColumns } from '../relation/select.js';
 import { NestedWriter } from './nested.writes.js';
 import { AggregationRepository } from './aggregation.js';
 import type { AggregateArgs, GroupByArgs } from './aggregation.js';
@@ -90,6 +90,9 @@ export class ModelDelegate<T extends Record<string, any> = Record<string, any>> 
 
     if (resolved.columns) {
       builder.select(...resolved.columns);
+    } else {
+      const defaults = defaultColumns(this.meta, args.include);
+      if (defaults) builder.select(...defaults);
     }
 
     if (args.where) {
@@ -139,27 +142,49 @@ export class ModelDelegate<T extends Record<string, any> = Record<string, any>> 
     return new AggregationRepository(this.driver, this.meta.table, this.quote).groupBy(args);
   }
 
+  /** True when `data` contains no relation keys — the write is a single
+   *  scalar INSERT/UPDATE and needs no transaction wrapper. */
+  private isFlatWrite(data: Record<string, any>): boolean {
+    for (const key of Object.keys(data)) {
+      if (this.meta.relations.has(key)) return false;
+    }
+    return true;
+  }
+
+  /** True when `where` pins the primary key — the update targets one row. */
+  private isPkWhere(where: Record<string, any>): boolean {
+    return this.meta.primaryKey in where;
+  }
+
   async create(args: CreateArgs): Promise<Record<string, any>> {
-    return this.driver.transaction(async (txDriver) => {
-      const writer = new NestedWriter(txDriver, this.registry, this.quote);
+    const run = async (driver: DatabaseDriver) => {
+      const writer = new NestedWriter(driver, this.registry, this.quote);
       const row = await writer.create(this.meta.name, args.data);
       if (args.include) {
-        const loader = new IncludeLoader(txDriver, this.registry, this.quote);
+        const loader = new IncludeLoader(driver, this.registry, this.quote);
         await loader.load([row], this.meta, args.include);
       }
       return row;
-    });
+    };
+    // Flat scalar inserts are a single statement — BEGIN/COMMIT would be
+    // pure round-trip overhead.
+    if (this.isFlatWrite(args.data)) return run(this.driver);
+    return this.driver.transaction(run);
   }
 
   async update(args: UpdateArgs): Promise<Record<string, any>[]> {
-    return this.driver.transaction(async (txDriver) => {
-      const writer = new NestedWriter(txDriver, this.registry, this.quote);
+    const run = async (driver: DatabaseDriver) => {
+      const writer = new NestedWriter(driver, this.registry, this.quote);
       const rows = await writer.update(this.meta.name, args.where, args.data);
       if (args.include && rows.length > 0) {
-        const loader = new IncludeLoader(txDriver, this.registry, this.quote);
+        const loader = new IncludeLoader(driver, this.registry, this.quote);
         await loader.load(rows, this.meta, args.include);
       }
       return rows;
-    });
+    };
+    // Flat scalar update on a single PK row is non-atomic only in theory —
+    // it cannot partially fail. Everything else keeps the transaction.
+    if (this.isFlatWrite(args.data) && this.isPkWhere(args.where)) return run(this.driver);
+    return this.driver.transaction(run);
   }
 }

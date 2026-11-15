@@ -74,7 +74,7 @@ describe('VaClient relation wiring', () => {
 
     expect(result[0].posts).toEqual([{ id: 10, userId: 1, title: 'Hello' }]);
     const queries = sharedMock.getQueries();
-    expect(queries[0].sql).toBe('SELECT * FROM "user"');
+    expect(queries[0].sql).toBe('SELECT "id", "name" FROM "user"');
     expect(queries[1].sql).toContain('FROM "post"');
   });
 

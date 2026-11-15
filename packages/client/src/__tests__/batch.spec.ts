@@ -15,9 +15,9 @@ describe('BatchRepository', () => {
 
   describe('createMany', () => {
     it('should create multiple records in batches', async () => {
-      for (const user of testUsers) {
-        driver.setResult({ rows: [user], rowCount: 1 });
-      }
+      // batchSize=2 → two repo.createMany calls, each now a single multi-row INSERT
+      driver.setResult({ rows: testUsers.slice(0, 2), rowCount: 2 });
+      driver.setResult({ rows: [testUsers[2]], rowCount: 1 });
       const results = await batch.createMany(testUsers);
       expect(results).toEqual(testUsers);
     });

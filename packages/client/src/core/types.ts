@@ -181,6 +181,8 @@ export interface ModelMeta {
   relations: Map<string, RelationMeta>;
   /** Optional schema fields — enables @updatedAt auto-touch when present. */
   fields?: Array<{ name: string; attributes: Array<{ name: string }> }>;
+  /** Scalar (non-relation) column names — used for default SELECT projection. */
+  columns?: string[];
 }
 
 export type ScalarFilter<T = any> =

@@ -14,7 +14,7 @@ import type {
   WhereInput,
 } from '../core/types.js';
 import { buildWhere } from './filters.js';
-import { resolveSelect, stripColumns } from './select.js';
+import { resolveSelect, stripColumns, defaultColumns } from './select.js';
 import { quoteColumn, quoteTable } from './quote.js';
 import type { QuoteFn } from './quote.js';
 import { assertSafeDirection, assertSafeInteger } from '../core/expression.js';
@@ -70,6 +70,11 @@ export class IncludeLoader {
   ): Promise<T[]> {
     if (parents.length === 0) return parents;
 
+    // Resolve + validate all branches first (sync), then load them in
+    // parallel — sibling includes are independent and each only needs its
+    // own pool connection. Sequential awaits used to stack every branch's
+    // round-trips onto the critical path.
+    const resolvedList: ResolvedInclude[] = [];
     for (const [field, arg] of Object.entries(include)) {
       if (arg === false) continue;
       const meta = model.relations.get(field);
@@ -80,18 +85,27 @@ export class IncludeLoader {
       if (!child) {
         throw new Error(`Relation target model "${meta.targetModel}" is not registered`);
       }
-      const resolved: ResolvedInclude = { meta, child, ...resolveIncludeArg(arg) };
-
-      if (meta.kind === 'many-to-many-implicit') {
-        await this.loadManyToMany(parents, model, resolved);
-      } else if (meta.isList) {
-        await this.loadList(parents, model, resolved);
-      } else {
-        await this.loadSingle(parents, model, resolved);
-      }
+      resolvedList.push({ meta, child, ...resolveIncludeArg(arg) });
     }
 
+    await Promise.all(resolvedList.map((resolved) => this.loadBranch(parents, model, resolved)));
+
     return parents;
+  }
+
+  private async loadBranch<T extends Record<string, any>>(
+    parents: T[],
+    model: ModelMeta,
+    resolved: ResolvedInclude,
+  ): Promise<void> {
+    const { meta } = resolved;
+    if (meta.kind === 'many-to-many-implicit') {
+      await this.loadManyToMany(parents, model, resolved);
+    } else if (meta.isList) {
+      await this.loadList(parents, model, resolved);
+    } else {
+      await this.loadSingle(parents, model, resolved);
+    }
   }
 
   private parentKeys<T extends Record<string, any>>(parents: T[], model: ModelMeta): any[] {
@@ -110,9 +124,8 @@ export class IncludeLoader {
     const ph = () => this.driver.getPlaceholder(paramIndex++);
     const clauses: string[] = [];
     const resolved = resolveSelect(child, opts.select, opts.include);
-    const projectionCols = resolved.columns
-      ? [...new Set([...resolved.columns, ...extraColumns])]
-      : null;
+    const baseCols = resolved.columns ?? defaultColumns(child, opts.include);
+    const projectionCols = baseCols ? [...new Set([...baseCols, ...extraColumns])] : null;
 
     if (where && where.values.length > 0) {
       const placeholders = where.values.map(() => ph());
@@ -266,10 +279,9 @@ export class IncludeLoader {
     params.push(...keys);
 
     const resolvedSelect = resolveSelect(child, resolved.select, resolved.include);
-    const projection = resolvedSelect.columns
-      ? [...new Set([...resolvedSelect.columns, childPk])]
-          .map((c) => `__c.${this.qc(c)}`)
-          .join(', ')
+    const baseCols = resolvedSelect.columns ?? defaultColumns(child, resolved.include);
+    const projection = baseCols
+      ? [...new Set([...baseCols, childPk])].map((c) => `__c.${this.qc(c)}`).join(', ')
       : '__c.*';
     let sql =
       `SELECT ${projection}, __j.${this.qc(parentCol)} AS __parent_key FROM ${this.qt(child.table)} AS __c ` +

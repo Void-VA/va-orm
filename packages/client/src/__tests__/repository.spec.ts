@@ -25,12 +25,13 @@ describe('Repository', () => {
     });
 
     it('should create multiple records', async () => {
-      for (const user of testUsers) {
-        driver.setResult({ rows: [user], rowCount: 1 });
-      }
+      driver.setResult({ rows: testUsers, rowCount: testUsers.length });
       const results = await repo.createMany(testUsers);
       expect(results).toEqual(testUsers);
-      expect(driver.getQueries().length).toBe(3);
+      expect(driver.getQueries().length).toBe(1);
+      expect(driver.getQueries()[0].sql).toContain(
+        'VALUES ($1, $2, $3, $4), ($5, $6, $7, $8), ($9, $10, $11, $12)',
+      );
     });
   });
 

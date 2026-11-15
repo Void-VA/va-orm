@@ -130,6 +130,28 @@ describe('SqliteDriver transaction', () => {
     }
   });
 
+  it('should isolate nested transaction failures via savepoint', async () => {
+    const driver = new SqliteDriver(':memory:');
+    try {
+      await driver.execute('CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)');
+      await driver.transaction(async (tx) => {
+        await tx.execute("INSERT INTO t (v) VALUES ('outer')");
+        // Nested tx fails → only its own work rolls back; outer continues.
+        await expect(
+          tx.transaction(async (nested) => {
+            await nested.execute("INSERT INTO t (v) VALUES ('inner')");
+            throw new Error('nested boom');
+          }),
+        ).rejects.toThrow('nested boom');
+        await tx.execute("INSERT INTO t (v) VALUES ('after')");
+      });
+      const rows = await driver.query<{ v: string }>('SELECT v FROM t ORDER BY id');
+      expect(rows.rows.map((r) => r.v)).toEqual(['outer', 'after']);
+    } finally {
+      await driver.close();
+    }
+  });
+
   it('should commit nested writes', async () => {
     const driver = new SqliteDriver(':memory:');
     try {

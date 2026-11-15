@@ -75,7 +75,9 @@ export class MysqlDriver implements DatabaseDriver {
 
   async transaction<T>(fn: (driver: DatabaseDriver) => Promise<T>): Promise<T> {
     const connection = await this.pool.getConnection();
-    let txDepth = 0;
+    // beginTransaction() below is already active when fn runs — nested
+    // transactions must use SAVEPOINTs (depth >= 1), not run bare.
+    let txDepth = 1;
     const txDriver: DatabaseDriver = {
       query: async <R = any>(sql: string, params?: any[]) => {
         const [rows] = await connection.query(sql, params);

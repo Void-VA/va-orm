@@ -81,7 +81,10 @@ export class PostgresDriver implements DatabaseDriver {
 
   async transaction<T>(fn: (driver: DatabaseDriver) => Promise<T>): Promise<T> {
     const client = await this.pool.connect();
-    let txDepth = 0;
+    // The outer BEGIN below is already active when fn runs, so nested
+    // transactions must start at depth 1 (SAVEPOINT), never issue their own
+    // BEGIN/COMMIT — that would prematurely commit the outer transaction.
+    let txDepth = 1;
     const txDriver: DatabaseDriver = {
       query: async <R = any>(sql: string, params?: any[]) => {
         const result = await client.query(sql, params);

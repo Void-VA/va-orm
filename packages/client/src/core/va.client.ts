@@ -92,6 +92,7 @@ export class VaClient {
     // Build relation-aware model registry from schema
     if (options.schema) {
       const relations = resolveRelations(options.schema.model);
+      const modelNames = new Set(options.schema.model.map((m) => m.name));
       for (const model of options.schema.model) {
         const key = model.name.charAt(0).toLowerCase() + model.name.slice(1);
         const explicit = options.models?.[model.name] ?? options.models?.[key];
@@ -105,12 +106,19 @@ export class VaClient {
             modelRelations.set(info.field, { ...info });
           }
         }
+        // Scalar columns = fields whose type is not another model. Used as the
+        // default SELECT projection so wide/unmodeled columns (tsvector,
+        // tsrange, bytea, ...) are not dragged over the wire on every read.
+        const columns = model.fields
+          .filter((f) => !f.isIgnored && !modelNames.has(f.type))
+          .map((f) => f.name);
         this.modelRegistry.set(model.name, {
           name: model.name,
           table,
           primaryKey,
           relations: modelRelations,
           fields: model.fields,
+          columns,
         });
         this.modelRegistry.set(key, this.modelRegistry.get(model.name)!);
       }

@@ -68,14 +68,29 @@ export class Repository<T extends Record<string, any>> {
         throw new Error('createMany: all rows must share the same column set');
       }
     }
-    const results: T[] = [];
+    const quotedTable = quoteTable(this.driver, this.tableName);
+    const quotedColumns = columns.map((c) => quoteColumn(this.driver, c)).join(', ');
 
-    for (const item of touched) {
-      const values = columns.map((c) => item[c]);
-      const placeholders = values.map((_, i) => this.driver.getPlaceholder(i + 1));
-      const sql = `INSERT INTO ${quoteTable(this.driver, this.tableName)} (${columns.map((c) => quoteColumn(this.driver, c)).join(', ')}) VALUES (${placeholders.join(', ')}) RETURNING *`;
-      const result = await this.driver.query<T>(sql, values);
-      results.push(result.rows[0]);
+    // Stay under the driver's bound-parameter limit: SQLite allows ~999
+    // (older) / 32766 (newer) variables; Postgres and MySQL allow 65535.
+    // 30k leaves headroom everywhere except SQLite, which gets 900.
+    const paramBudget = this.driver.getDialect?.() === 'sqlite' ? 900 : 30_000;
+    const rowsPerChunk = Math.max(1, Math.floor(paramBudget / Math.max(columns.length, 1)));
+
+    const results: T[] = [];
+    for (let start = 0; start < touched.length; start += rowsPerChunk) {
+      const chunk = touched.slice(start, start + rowsPerChunk);
+      const params: any[] = [];
+      const tuples = chunk.map((item) => {
+        const placeholders = columns.map((c) => {
+          params.push(item[c]);
+          return this.driver.getPlaceholder(params.length);
+        });
+        return `(${placeholders.join(', ')})`;
+      });
+      const sql = `INSERT INTO ${quotedTable} (${quotedColumns}) VALUES ${tuples.join(', ')} RETURNING *`;
+      const result = await this.driver.query<T>(sql, params);
+      results.push(...result.rows);
     }
 
     return results;

@@ -49,6 +49,35 @@ export function resolveSelect(
   return { columns, keep: [...new Set([...wanted, ...includeKeys])] };
 }
 
+/**
+ * Default projection: every scalar column plus the keys needed to hydrate
+ * `include` relations (PK + FK columns of non-list FK-holder relations).
+ * Returns null when the model carries no column metadata (SELECT * fallback).
+ */
+export function defaultColumns(model: ModelMeta, include?: IncludeMap): string[] | null {
+  if (!model.columns || model.columns.length === 0) return null;
+  const columns = [...model.columns];
+  const have = new Set(columns);
+  const add = (col?: string) => {
+    if (col && have.has(col) === false && model.columns!.includes(col)) {
+      have.add(col);
+      columns.push(col);
+    }
+  };
+  // Only add the PK when it is a real scalar column — composite-PK models
+  // fall back to primaryKey='id' which does not exist as a column.
+  add(model.primaryKey);
+  if (include) {
+    for (const field of Object.keys(include)) {
+      const meta = model.relations.get(field);
+      if (meta && !meta.isList && meta.isFkHolder) {
+        for (const fk of meta.fkFields) add(fk);
+      }
+    }
+  }
+  return columns;
+}
+
 export function stripColumns<T extends Record<string, any>>(rows: T[], keep: string[] | null): T[] {
   if (keep === null) return rows;
   const keepSet = new Set(keep);
