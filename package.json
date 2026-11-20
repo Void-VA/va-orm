@@ -92,6 +92,7 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "bun-types": "^1.2.0",
+    "pg": "^8.13.0",
     "prettier": "^3.9.6",
     "tsup": "^8.0.0",
     "typescript": "^5.5.0"

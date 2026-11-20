@@ -72,11 +72,7 @@ export class ReturningWriter {
       : this.insertFetch<T>(table, columns, rows);
   }
 
-  private async insertReturning<T>(
-    table: string,
-    columns: string[],
-    rows: Row[],
-  ): Promise<T[]> {
+  private async insertReturning<T>(table: string, columns: string[], rows: Row[]): Promise<T[]> {
     const quotedTable = quoteTable(this.driver, table);
     const quotedColumns = columns.map((c) => quoteColumn(this.driver, c)).join(', ');
 
@@ -220,7 +216,9 @@ export class ReturningWriter {
         .map((c) => quoteColumn(this.driver, c))
         .join(', ');
       const updateClause = spec.updateColumns
-        .map((col) => `${quoteColumn(this.driver, col)} = EXCLUDED.${quoteColumn(this.driver, col)}`)
+        .map(
+          (col) => `${quoteColumn(this.driver, col)} = EXCLUDED.${quoteColumn(this.driver, col)}`,
+        )
         .join(', ');
       const sql =
         `INSERT INTO ${quotedTable} (${quotedColumns}) VALUES (${placeholders.join(', ')}) ` +
@@ -243,14 +241,22 @@ export class ReturningWriter {
       `ON DUPLICATE KEY UPDATE ${updateClause}`;
     const meta = await this.driver.execute(sql, values);
 
-    const conflictMatch = spec.conflictColumns.every(
-      (column) => spec.data[column] !== undefined && spec.data[column] !== null,
-    );
-    if (conflictMatch) {
-      const match: Row = {};
-      for (const column of spec.conflictColumns) match[column] = spec.data[column];
-      const found = await this.selectByColumns<T>(table, match);
-      if (found) return found;
+    // MySQL reports a generated key only when the statement inserted a row.
+    // `insertId === 0` means ON DUPLICATE KEY UPDATE matched an existing row,
+    // so the row has to be found through the conflict columns instead.
+    const inserted =
+      meta.insertId !== undefined && meta.insertId !== null && String(meta.insertId) !== '0';
+
+    if (!inserted) {
+      const conflictMatch = spec.conflictColumns.every(
+        (column) => spec.data[column] !== undefined && spec.data[column] !== null,
+      );
+      if (conflictMatch) {
+        const match: Row = {};
+        for (const column of spec.conflictColumns) match[column] = spec.data[column];
+        const found = await this.selectByColumns<T>(table, match);
+        if (found) return found;
+      }
     }
 
     const key = this.insertKey(spec.data, meta.insertId);
@@ -300,7 +306,10 @@ export class ReturningWriter {
   private async selectByColumns<T>(table: string, match: Row): Promise<T | null> {
     const entries = Object.entries(match);
     const where = entries
-      .map(([column], i) => `${quoteColumn(this.driver, column)} = ${this.driver.getPlaceholder(i + 1)}`)
+      .map(
+        ([column], i) =>
+          `${quoteColumn(this.driver, column)} = ${this.driver.getPlaceholder(i + 1)}`,
+      )
       .join(' AND ');
     const sql = `SELECT * FROM ${quoteTable(this.driver, table)} WHERE ${where} LIMIT 1`;
     const result = await this.driver.query<T>(
