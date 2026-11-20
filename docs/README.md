@@ -19,7 +19,8 @@ docs/
 ├── 10-cli.md              # CLI tools
 ├── 11-testing.md          # Testing strategy
 ├── 12-relations.md        # Relations (include, filters, nested writes)
-└── 13-security.md         # Security plan & audit remediation
+├── 13-security.md         # Security plan & audit remediation
+└── 14-bug-connection-pool-ssl.md  # Bug report: pool slot leak + dropped ssl
 ```
 
 ## Quick Start

@@ -188,9 +188,10 @@ describe('SqlGenerator', () => {
       expect(output).toContain('name VARCHAR(255)');
     });
 
-    it('should generate DEFAULT for autoincrement', () => {
+    it('should emit IDENTITY as a column modifier, not a DEFAULT expression', () => {
       const output = generator.generateDDL(testAst);
-      expect(output).toContain('GENERATED ALWAYS AS IDENTITY');
+      expect(output).toContain('id INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY');
+      expect(output).not.toContain('DEFAULT GENERATED');
     });
 
     it('should generate DEFAULT for now()', () => {
@@ -251,7 +252,8 @@ describe('SqlGenerator', () => {
 
     it('should use AUTO_INCREMENT instead of GENERATED ALWAYS', () => {
       const output = generator.generateDDL(testAst);
-      expect(output).toContain('AUTO_INCREMENT');
+      expect(output).toContain('id INTEGER PRIMARY KEY AUTO_INCREMENT');
+      expect(output).not.toContain('DEFAULT AUTO_INCREMENT');
     });
 
     it('should generate DEFAULT CURRENT_TIMESTAMP for @updatedAt', () => {
@@ -284,6 +286,12 @@ describe('SqlGenerator', () => {
     it('should generate CREATE TABLE', () => {
       const output = generator.generateDDL(testAst);
       expect(output).toContain('CREATE TABLE IF NOT EXISTS user');
+    });
+
+    it('should emit AUTOINCREMENT as a column modifier, not a DEFAULT expression', () => {
+      const output = generator.generateDDL(testAst);
+      expect(output).toContain('id INTEGER PRIMARY KEY AUTOINCREMENT');
+      expect(output).not.toContain('DEFAULT AUTOINCREMENT');
     });
   });
 });

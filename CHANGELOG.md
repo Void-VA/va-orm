@@ -3,6 +3,46 @@
 All notable changes to `@v-va/orm` are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+## [0.1.3]
+
+### Fixed
+
+- **Connection pool never leaked again on failed query**: `query()` and
+  `execute()` closed the driver on error without decrementing `inUseCount`,
+  so every failed query burned a pool slot permanently. After `max` errors
+  the pool answered every request with `Connection acquisition timeout`
+  until the process restarted. Failures now go through `discard()`, which
+  releases the slot and hands a fresh connection to a waiting consumer.
+- **Connection options no longer dropped by the pool**: `ssl`,
+  `idleTimeoutMs` and `disablePreparedStatements` were accepted but never
+  forwarded to the driver, so pooled connections always ran with
+  `ssl: false` and prepared statements enabled. Neon rejects that with
+  `28000 connection is insecure (try using sslmode=require)`.
+- **Neon pooled endpoints detected as PgBouncer**: DSN hosts containing
+  `-pooler.` now disable prepared statements (`prepareThreshold: 0`).
+- **Pool lifecycle limits now apply**: `maxUses` and `maxLifetimeMs` were
+  reset on every release, so connections were never retired for age or usage.
+  Checkout counters and creation time are now tracked per driver, and idle
+  connections that are unhealthy, out of uses, or too old are closed on the
+  next acquire instead of silently kept.
+- **`autoincrement()` DDL is valid again**: the SQL generator emitted
+  `DEFAULT GENERATED ALWAYS AS IDENTITY` (Postgres), `DEFAULT AUTO_INCREMENT`
+  (MySQL), and relied on a SQLite special case. Identity/auto-increment
+  clauses are now emitted as column modifiers, so `va db push`,
+  `va migrate dev`, and `va generate --sql` produce runnable DDL on all three
+  providers.
+- **`va generate --sql` uses the schema's dialect**: the command always
+  generated PostgreSQL DDL unless `--provider` was passed, and the CLI never
+  read `--provider` at all. The dialect now defaults to the schema datasource
+  (`postgres`, `mysql`, `sqlite`) and the flag is wired through.
+- **MySQL pools honour `max`**: the driver passed `max` to `mysql2`, which
+  ignores it and only honours `connectionLimit`. Pool size limits now apply
+  to MySQL connections too.
+
+Detail: [`docs/14-bug-connection-pool-ssl.md`](./docs/14-bug-connection-pool-ssl.md).
+
 ## [0.1.2]
 
 ### Fixed

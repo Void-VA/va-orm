@@ -29,6 +29,8 @@ function showHelp() {
       --schema <path>                  Schema file path (default: va.schema)
       --output <path>                  Output directory (default: ./generated)
       --sql                            Also generate schema.sql
+      --provider <name>                SQL dialect: postgres|mysql|sqlite
+                                       (default: from datasource)
 
     migrate                            Run database migrations
       up                               Apply pending migrations
@@ -77,7 +79,8 @@ async function main() {
       const schema = getArg('--schema');
       const output = getArg('--output');
       const sql = hasFlag('--sql');
-      await generateCommand({ schema, output, sql });
+      const provider = getArg('--provider');
+      await generateCommand({ schema, output, sql, provider });
       break;
     }
 

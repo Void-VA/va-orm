@@ -16,6 +16,16 @@ interface PooledConnection {
   isHealthy: boolean;
 }
 
+/**
+ * Lifecycle counters live outside `PooledConnection` because acquire() hands
+ * the driver to the caller and release() rebuilds the idle entry from scratch.
+ * Keeping them per driver makes `maxUses` / `maxLifetimeMs` actually work.
+ */
+interface DriverMeta {
+  createdAt: number;
+  useCount: number;
+}
+
 export class ConnectionPool {
   private static globalFactories: Map<DriverType, (dsn: string) => DatabaseDriver> = new Map();
 
@@ -24,6 +34,7 @@ export class ConnectionPool {
   }
 
   private connections: PooledConnection[] = [];
+  private driverMeta = new WeakMap<DatabaseDriver, DriverMeta>();
   private inUseCount = 0;
   private waitingQueue: Array<{
     resolve: (connection: DatabaseDriver) => void;
@@ -53,6 +64,8 @@ export class ConnectionPool {
     slowQueryThresholdMs?: number;
     onSlowQuery?: (info: SlowQueryInfo) => void;
     retryMode: 'reads' | 'none' | 'all';
+    /** Forwarded to every driver this pool creates (Postgres/MySQL). */
+    ssl?: ConnectionConfig['ssl'];
   };
   private stats = {
     totalQueries: 0,
@@ -92,6 +105,7 @@ export class ConnectionPool {
       retryMode: options.retryMode ?? 'reads',
       applicationName: options.applicationName ?? 'va-orm',
       disablePreparedStatements: options.disablePreparedStatements ?? false,
+      ssl: options.ssl,
       driverFactory: options.driverFactory,
       http: options.http,
       slowQueryThresholdMs: options.slowQueryThresholdMs,
@@ -144,8 +158,11 @@ export class ConnectionPool {
           const { PostgresDriver } = await import('../drivers/postgres/postgres.driver.js');
           driver = new PostgresDriver(this.dsn, {
             max: 1,
+            idleTimeoutMs: this.config.idleTimeoutMs,
             connectionTimeoutMs: this.config.connectionTimeoutMs,
             applicationName: this.config.applicationName,
+            disablePreparedStatements: this.config.disablePreparedStatements,
+            ssl: this.config.ssl,
           });
           break;
         }
@@ -153,7 +170,9 @@ export class ConnectionPool {
           const { MysqlDriver } = await import('../drivers/mysql/mysql.driver.js');
           driver = new MysqlDriver(this.dsn, {
             max: 1,
+            idleTimeoutMs: this.config.idleTimeoutMs,
             connectionTimeoutMs: this.config.connectionTimeoutMs,
+            ssl: this.config.ssl,
           });
           break;
         }
@@ -172,12 +191,20 @@ export class ConnectionPool {
       }
     }
 
-    return {
+    const conn: PooledConnection = {
       driver,
       lastUsed: Date.now(),
       useCount: 0,
       isHealthy: true,
     };
+    this.driverMeta.set(driver, { createdAt: conn.lastUsed, useCount: 0 });
+    return conn;
+  }
+
+  /** Count one checkout against the driver's `maxUses` budget. */
+  private markUsed(driver: DatabaseDriver): void {
+    const meta = this.driverMeta.get(driver);
+    if (meta) meta.useCount++;
   }
 
   /** Idle + in-use must never exceed max (prevents concurrent acquire race). */
@@ -195,20 +222,28 @@ export class ConnectionPool {
     // Try to get an idle connection
     for (let i = 0; i < this.connections.length; i++) {
       const conn = this.connections[i];
-      if (conn.isHealthy && conn.useCount < this.config.maxUses) {
-        if (Date.now() - conn.lastUsed < this.config.maxLifetimeMs) {
-          this.connections.splice(i, 1);
-          conn.lastUsed = Date.now();
-          conn.useCount++;
-          this.inUseCount++;
-          return conn.driver;
-        }
-        // Expired / maxed uses: drop from idle and close below
+      const meta = this.driverMeta.get(conn.driver);
+
+      if (
+        conn.isHealthy &&
+        meta &&
+        meta.useCount < this.config.maxUses &&
+        Date.now() - meta.createdAt < this.config.maxLifetimeMs
+      ) {
         this.connections.splice(i, 1);
-        i--;
-        await conn.driver.close().catch(() => {});
-        continue;
+        meta.useCount++;
+        conn.lastUsed = Date.now();
+        conn.useCount = meta.useCount;
+        this.inUseCount++;
+        return conn.driver;
       }
+
+      // Unhealthy, out of uses, or older than maxLifetimeMs: retire it and
+      // fall through to the next idle entry.
+      this.connections.splice(i, 1);
+      i--;
+      this.driverMeta.delete(conn.driver);
+      await conn.driver.close().catch(() => {});
     }
 
     // Create new connection only if idle+inUse is under hard max
@@ -216,8 +251,7 @@ export class ConnectionPool {
       this.inUseCount++;
       try {
         const conn = await this.createConnection();
-        conn.lastUsed = Date.now();
-        conn.useCount = 1;
+        this.markUsed(conn.driver);
         return conn.driver;
       } catch (error) {
         this.inUseCount--;
@@ -239,11 +273,40 @@ export class ConnectionPool {
     });
   }
 
+  /**
+   * Drop a broken driver without returning it to the idle pool.
+   * Must decrement `inUseCount`, otherwise every failed query permanently
+   * burns a slot and the pool ends up rejecting all work with
+   * "Connection acquisition timeout".
+   */
+  private async discard(driver: DatabaseDriver): Promise<void> {
+    this.inUseCount = Math.max(0, this.inUseCount - 1);
+    this.driverMeta.delete(driver);
+    await driver.close().catch(() => {});
+
+    const waiting = this.waitingQueue.shift();
+    if (!waiting) return;
+    if (waiting.timeout) clearTimeout(waiting.timeout);
+
+    // Freed slot: build a replacement for the waiter instead of handing over
+    // the driver we just closed.
+    this.inUseCount++;
+    try {
+      const conn = await this.createConnection();
+      this.markUsed(conn.driver);
+      waiting.resolve(conn.driver);
+    } catch (error) {
+      this.inUseCount--;
+      waiting.reject(error as Error);
+    }
+  }
+
   async release(driver: DatabaseDriver): Promise<void> {
     this.inUseCount = Math.max(0, this.inUseCount - 1);
 
     if (this.closed) {
-      await driver.close();
+      this.driverMeta.delete(driver);
+      await driver.close().catch(() => {});
       return;
     }
 
@@ -258,18 +321,21 @@ export class ConnectionPool {
       return;
     }
 
-    // Return to idle pool
+    // Return to idle pool, preserving the driver's lifecycle counters so
+    // maxUses/maxLifetimeMs can retire it on a later acquire.
+    const meta = this.driverMeta.get(driver);
     const conn: PooledConnection = {
       driver,
       lastUsed: Date.now(),
-      useCount: 0,
+      useCount: meta?.useCount ?? 0,
       isHealthy: true,
     };
 
     if (this.connections.length < this.config.max) {
       this.connections.push(conn);
     } else {
-      await driver.close();
+      this.driverMeta.delete(driver);
+      await driver.close().catch(() => {});
     }
   }
 
@@ -328,7 +394,7 @@ export class ConnectionPool {
       } catch (error) {
         lastError = error as Error;
         this.stats.totalErrors++;
-        await driver.close().catch(() => {});
+        await this.discard(driver);
 
         if (attempt < maxAttempts - 1) {
           await this.backoffDelay(attempt);
@@ -354,7 +420,7 @@ export class ConnectionPool {
       } catch (error) {
         lastError = error as Error;
         this.stats.totalErrors++;
-        await driver.close().catch(() => {});
+        await this.discard(driver);
 
         if (attempt < maxAttempts - 1) {
           await this.backoffDelay(attempt);
@@ -394,6 +460,7 @@ export class ConnectionPool {
     for (let i = toRemove.length - 1; i >= 0; i--) {
       const index = toRemove[i];
       const conn = this.connections[index];
+      this.driverMeta.delete(conn.driver);
       await conn.driver.close().catch(() => {});
       this.connections.splice(index, 1);
     }
@@ -419,6 +486,7 @@ export class ConnectionPool {
     // Close all connections
     await Promise.all(this.connections.map((conn) => conn.driver.close().catch(() => {})));
     this.connections = [];
+    this.driverMeta = new WeakMap();
   }
 
   async isHealthy(): Promise<boolean> {

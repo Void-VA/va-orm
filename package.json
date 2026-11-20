@@ -1,6 +1,6 @@
 {
   "name": "@v-va/orm",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "VA-ORM — lightweight, production-grade TypeScript ORM (PostgreSQL, MySQL, SQLite). Schema-first, zero heavy engine.",
   "type": "module",
   "main": "./packages/client/dist/index.js",

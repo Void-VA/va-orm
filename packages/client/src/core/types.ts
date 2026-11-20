@@ -44,7 +44,12 @@ export interface QueryResult<T = any> {
 
 export interface DatabaseDriver {
   query<T = any>(sql: string, params?: any[]): Promise<QueryResult<T>>;
-  execute(sql: string, params?: any[]): Promise<{ rowCount: number }>;
+  /**
+   * Run a statement. `insertId` is filled by drivers whose dialect cannot
+   * return rows from a write (MySQL) so the portable writer can re-read the
+   * inserted row; other drivers leave it undefined.
+   */
+  execute(sql: string, params?: any[]): Promise<{ rowCount: number; insertId?: number | string }>;
   transaction<T>(fn: (driver: DatabaseDriver) => Promise<T>): Promise<T>;
   close(): Promise<void>;
   getPlaceholder(index: number): string;
@@ -356,6 +361,11 @@ export interface RepositoryOptions {
   camelToSnake?: boolean;
   /** App-level field name carrying @updatedAt semantics — auto-set to now on write when absent. */
   updatedAtField?: string;
+  /**
+   * Primary-key column. Needed by dialects without `RETURNING` (MySQL) to
+   * re-read written rows; defaults to `id`.
+   */
+  primaryKey?: string;
 }
 
 // ============ AGGREGATE ============

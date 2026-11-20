@@ -7,6 +7,7 @@ import type { DatabaseDriver, ModelMeta, RelationMeta } from '../core/types.js';
 import { ansiQuote, quoteColumn, quoteTable } from '../relation/quote.js';
 import type { QuoteFn } from '../relation/quote.js';
 import { buildSetClause } from './field.ops.js';
+import { ReturningWriter, onConflictDoNothingClause } from './write/index.js';
 
 export interface NestedCreateOp {
   create?: Record<string, any> | Record<string, any>[];
@@ -92,16 +93,13 @@ export class NestedWriter {
 
   async insertRow(model: ModelMeta, data: Record<string, any>): Promise<Record<string, any>> {
     const touched = this.touchTimestamps(model, data);
-    const columns = Object.keys(touched);
-    if (columns.length === 0) {
+    if (Object.keys(touched).length === 0) {
       throw new Error(`Cannot create ${model.name} with empty data`);
     }
-    const values = Object.values(touched);
-    const placeholders = values.map((_, i) => this.driver.getPlaceholder(i + 1));
-    const quotedColumns = columns.map((c) => quoteColumn(this.driver, c));
-    const sql = `INSERT INTO ${quoteTable(this.driver, model.table)} (${quotedColumns.join(', ')}) VALUES (${placeholders.join(', ')}) RETURNING *`;
-    const result = await this.driver.query(sql, values);
-    return result.rows[0];
+    // Portable insert: RETURNING on Postgres/SQLite, insertId + re-read on MySQL.
+    const writer = new ReturningWriter(this.driver, { primaryKey: model.primaryKey });
+    const [row] = await writer.insert(model.table, [touched]);
+    return row;
   }
 
   async create(modelName: string, data: NestedData): Promise<Record<string, any>> {
@@ -518,7 +516,8 @@ export class NestedWriter {
     const b = parentIsA ? childRow[childPk] : parentRow[parentPk];
     const sql =
       `INSERT INTO ${quoteTable(this.driver, meta.joinTable!)} (${quoteColumn(this.driver, 'A')}, ${quoteColumn(this.driver, 'B')}) VALUES ` +
-      `(${this.driver.getPlaceholder(1)}, ${this.driver.getPlaceholder(2)}) ON CONFLICT DO NOTHING`;
+      `(${this.driver.getPlaceholder(1)}, ${this.driver.getPlaceholder(2)}) ` +
+      onConflictDoNothingClause(this.driver, ['A', 'B']);
     await this.driver.execute(sql, [a, b]);
   }
 }

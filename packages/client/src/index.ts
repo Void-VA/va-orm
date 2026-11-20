@@ -12,6 +12,7 @@ export * from './repository/aggregation.js';
 export * from './repository/model.delegate.js';
 export * from './repository/nested.writes.js';
 export * from './repository/field.ops.js';
+export * from './repository/write/index.js';
 
 export * from './relation/index.js';
 export { ansiQuote, mysqlQuote, quoterFor } from './relation/quote.js';

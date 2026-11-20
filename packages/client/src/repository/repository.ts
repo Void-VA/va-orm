@@ -15,10 +15,12 @@ import { QueryBuilder } from '../core/query-builder.js';
 import { ExpressionBuilder } from '../core/expression.js';
 import { buildSetClause } from './field.ops.js';
 import { quoteColumn, quoteTable } from '../relation/quote.js';
+import { ReturningWriter } from './write/index.js';
 
 export class Repository<T extends Record<string, any>> {
   private options: Required<Omit<RepositoryOptions, 'updatedAtField'>>;
   private updatedAtField?: string;
+  private writer: ReturningWriter;
 
   constructor(
     private driver: DatabaseDriver,
@@ -29,8 +31,10 @@ export class Repository<T extends Record<string, any>> {
       softDelete: options.softDelete ?? false,
       softDeleteColumn: options.softDeleteColumn ?? 'deleted_at',
       camelToSnake: options.camelToSnake ?? true,
+      primaryKey: options.primaryKey ?? 'id',
     };
     this.updatedAtField = options.updatedAtField;
+    this.writer = new ReturningWriter(driver, { primaryKey: this.options.primaryKey });
   }
 
   /**
@@ -47,53 +51,15 @@ export class Repository<T extends Record<string, any>> {
 
   async create(data: Partial<T>): Promise<T> {
     const touched = this.touch({ ...(data as Record<string, any>) });
-    const columns = Object.keys(touched);
-    const values = Object.values(touched);
-    const placeholders = values.map((_, i) => this.driver.getPlaceholder(i + 1));
-
-    const sql = `INSERT INTO ${quoteTable(this.driver, this.tableName)} (${columns.map((c) => quoteColumn(this.driver, c)).join(', ')}) VALUES (${placeholders.join(', ')}) RETURNING *`;
-    const result = await this.driver.query<T>(sql, values);
-    return result.rows[0];
+    const rows = await this.writer.insert<T>(this.tableName, [touched]);
+    return rows[0];
   }
 
   async createMany(data: Partial<T>[]): Promise<T[]> {
     if (data.length === 0) return [];
 
     const touched = data.map((item) => this.touch({ ...(item as Record<string, any>) }));
-    const columns = Object.keys(touched[0]);
-    const columnKey = columns.slice().sort().join('\u0000');
-    for (const item of touched) {
-      const keys = Object.keys(item).sort().join('\u0000');
-      if (keys !== columnKey) {
-        throw new Error('createMany: all rows must share the same column set');
-      }
-    }
-    const quotedTable = quoteTable(this.driver, this.tableName);
-    const quotedColumns = columns.map((c) => quoteColumn(this.driver, c)).join(', ');
-
-    // Stay under the driver's bound-parameter limit: SQLite allows ~999
-    // (older) / 32766 (newer) variables; Postgres and MySQL allow 65535.
-    // 30k leaves headroom everywhere except SQLite, which gets 900.
-    const paramBudget = this.driver.getDialect?.() === 'sqlite' ? 900 : 30_000;
-    const rowsPerChunk = Math.max(1, Math.floor(paramBudget / Math.max(columns.length, 1)));
-
-    const results: T[] = [];
-    for (let start = 0; start < touched.length; start += rowsPerChunk) {
-      const chunk = touched.slice(start, start + rowsPerChunk);
-      const params: any[] = [];
-      const tuples = chunk.map((item) => {
-        const placeholders = columns.map((c) => {
-          params.push(item[c]);
-          return this.driver.getPlaceholder(params.length);
-        });
-        return `(${placeholders.join(', ')})`;
-      });
-      const sql = `INSERT INTO ${quotedTable} (${quotedColumns}) VALUES ${tuples.join(', ')} RETURNING *`;
-      const result = await this.driver.query<T>(sql, params);
-      results.push(...result.rows);
-    }
-
-    return results;
+    return this.writer.insert<T>(this.tableName, touched);
   }
 
   // ============ READ ============
@@ -171,12 +137,13 @@ export class Repository<T extends Record<string, any>> {
     if (Object.keys(where).length === 0) {
       throw new Error('refusing UPDATE without WHERE');
     }
+    const touched = this.touch({ ...(data as Record<string, any>) });
     const {
       setParts,
       params: setValues,
       nextIndex,
     } = buildSetClause(
-      this.touch({ ...(data as Record<string, any>) }),
+      touched,
       (i) => this.driver.getPlaceholder(i),
       (name) => quoteColumn(this.driver, name),
     );
@@ -188,9 +155,14 @@ export class Repository<T extends Record<string, any>> {
     );
     const whereValues = whereConditions.map(([, value]) => value);
 
-    const sql = `UPDATE ${quoteTable(this.driver, this.tableName)} SET ${setParts.join(', ')} WHERE ${whereParts.join(' AND ')} RETURNING *`;
-    const result = await this.driver.query<T>(sql, [...setValues, ...whereValues]);
-    return result.rows[0];
+    const rows = await this.writer.update<T>(this.tableName, {
+      setParts,
+      params: setValues,
+      whereParts,
+      whereParams: whereValues,
+      updatedColumns: Object.keys(touched),
+    });
+    return rows[0];
   }
 
   async updateMany(where: Partial<T>, data: Partial<T>): Promise<number> {
@@ -224,18 +196,11 @@ export class Repository<T extends Record<string, any>> {
   // controls updateColumns explicitly, so implicit columns would be inconsistent.
 
   async upsert(data: Partial<T>, conflictColumns: string[], updateColumns: string[]): Promise<T> {
-    const columns = Object.keys(data);
-    const values = Object.values(data);
-    const placeholders = values.map((_, i) => this.driver.getPlaceholder(i + 1));
-
-    const conflictClause = conflictColumns.map((c) => quoteColumn(this.driver, c)).join(', ');
-    const updateClause = updateColumns
-      .map((col) => `${quoteColumn(this.driver, col)} = EXCLUDED.${quoteColumn(this.driver, col)}`)
-      .join(', ');
-
-    const sql = `INSERT INTO ${quoteTable(this.driver, this.tableName)} (${columns.map((c) => quoteColumn(this.driver, c)).join(', ')}) VALUES (${placeholders.join(', ')}) ON CONFLICT (${conflictClause}) DO UPDATE SET ${updateClause} RETURNING *`;
-    const result = await this.driver.query<T>(sql, values);
-    return result.rows[0];
+    return this.writer.upsert<T>(this.tableName, {
+      data: data as Record<string, any>,
+      conflictColumns,
+      updateColumns,
+    });
   }
 
   // ============ DELETE ============
@@ -250,15 +215,13 @@ export class Repository<T extends Record<string, any>> {
     );
     const whereValues = conditions.map(([, value]) => value);
 
-    if (this.options.softDelete) {
-      const sql = `UPDATE ${quoteTable(this.driver, this.tableName)} SET ${quoteColumn(this.driver, this.options.softDeleteColumn)} = NOW() WHERE ${whereParts.join(' AND ')} RETURNING *`;
-      const result = await this.driver.query<T>(sql, whereValues);
-      return result.rows[0];
-    }
-
-    const sql = `DELETE FROM ${quoteTable(this.driver, this.tableName)} WHERE ${whereParts.join(' AND ')} RETURNING *`;
-    const result = await this.driver.query<T>(sql, whereValues);
-    return result.rows[0];
+    const rows = this.options.softDelete
+      ? await this.writer.softDelete<T>(this.tableName, this.options.softDeleteColumn, {
+          whereParts,
+          whereParams: whereValues,
+        })
+      : await this.writer.remove<T>(this.tableName, { whereParts, whereParams: whereValues });
+    return rows[0];
   }
 
   /**

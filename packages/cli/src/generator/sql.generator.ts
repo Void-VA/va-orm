@@ -22,6 +22,17 @@ const ON_DELETE_SQL: Record<string, string> = {
   SetDefault: 'SET DEFAULT',
 };
 
+/**
+ * Values that must be emitted bare (no `DEFAULT` prefix). They are column
+ * modifiers: `id INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY`,
+ * `id INTEGER PRIMARY KEY AUTO_INCREMENT`, `id INTEGER PRIMARY KEY AUTOINCREMENT`.
+ */
+const COLUMN_MODIFIER_CLAUSES = new Set([
+  'GENERATED ALWAYS AS IDENTITY',
+  'AUTO_INCREMENT',
+  'AUTOINCREMENT',
+]);
+
 export class SqlGenerator {
   private provider: string;
 
@@ -224,8 +235,10 @@ export class SqlGenerator {
     if (defaultAttr) {
       const defaultValue = this.generateDefaultValue(field, defaultAttr.args);
       if (defaultValue) {
-        if (this.provider === 'sqlite' && defaultValue === 'AUTOINCREMENT') {
-          parts.push('AUTOINCREMENT');
+        // Identity / auto-increment are column modifiers, not DEFAULT
+        // expressions: `DEFAULT GENERATED ALWAYS AS IDENTITY` is invalid SQL.
+        if (COLUMN_MODIFIER_CLAUSES.has(defaultValue)) {
+          parts.push(defaultValue);
         } else {
           parts.push(`DEFAULT ${defaultValue}`);
         }

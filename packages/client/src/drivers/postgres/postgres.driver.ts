@@ -24,7 +24,7 @@ export class PostgresDriver implements DatabaseDriver {
       min?: number;
       idleTimeoutMs?: number;
       connectionTimeoutMs?: number;
-      ssl?: boolean | { rejectUnauthorized?: boolean; ca?: string };
+      ssl?: boolean | { rejectUnauthorized?: boolean; ca?: string; cert?: string; key?: string };
       applicationName?: string;
       disablePreparedStatements?: boolean;
     } = {},
@@ -38,7 +38,8 @@ export class PostgresDriver implements DatabaseDriver {
     return (
       this.connectionString.includes('pgbouncer') ||
       this.connectionString.includes('supavisor') ||
-      this.connectionString.includes('transaction_mode=true')
+      this.connectionString.includes('transaction_mode=true') ||
+      this.connectionString.includes('-pooler.')
     );
   }
 
@@ -51,7 +52,7 @@ export class PostgresDriver implements DatabaseDriver {
       min: this.options.min ?? 2,
       idleTimeoutMillis: this.options.idleTimeoutMs ?? 10000,
       connectionTimeoutMillis: this.options.connectionTimeoutMs ?? 5000,
-      ssl: this.options.ssl || false,
+      ...(this.options.ssl ? { ssl: this.options.ssl } : {}),
       application_name: this.appName,
       // PgBouncer compatibility: disable prepared statements
       ...(this.pgbouncerMode ? { prepareThreshold: 0 } : {}),

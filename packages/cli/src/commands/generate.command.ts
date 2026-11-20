@@ -4,6 +4,7 @@ import { SchemaParser } from '../../../schema/src/schema.parser.js';
 import { TypeGenerator } from '../generator/type.generator.js';
 import { ClientGenerator } from '../generator/client.generator.js';
 import { SqlGenerator } from '../generator/sql.generator.js';
+import { datasourceToProvider } from './driver.factory.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 
@@ -17,7 +18,6 @@ export interface GenerateOptions {
 export async function generateCommand(options: GenerateOptions): Promise<void> {
   const schemaPath = options.schema || 'va.schema';
   const outputDir = options.output || './generated';
-  const provider = options.provider || 'postgres';
 
   console.log(`Generating from schema: ${schemaPath}`);
 
@@ -46,10 +46,14 @@ export async function generateCommand(options: GenerateOptions): Promise<void> {
 
     // Generate SQL if requested
     if (options.sql) {
+      // Dialect defaults to the schema datasource so a MySQL/SQLite project
+      // never gets PostgreSQL DDL; `--provider` still overrides.
+      const provider =
+        options.provider ?? datasourceToProvider(ast.datasource[0]?.provider ?? 'postgresql');
       const sqlGenerator = new SqlGenerator(provider);
       const sql = sqlGenerator.generateDDL(ast);
       await fs.writeFile(path.resolve(outputDir, 'schema.sql'), sql);
-      console.log(`  Generated schema.sql`);
+      console.log(`  Generated schema.sql (${provider})`);
     }
 
     console.log('\x1b[32m✓ Generation complete\x1b[0m');

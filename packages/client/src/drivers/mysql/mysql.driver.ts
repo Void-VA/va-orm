@@ -30,7 +30,7 @@ export class MysqlDriver implements DatabaseDriver {
       min?: number;
       idleTimeoutMs?: number;
       connectionTimeoutMs?: number;
-      ssl?: boolean | { rejectUnauthorized?: boolean };
+      ssl?: boolean | { rejectUnauthorized?: boolean; ca?: string; cert?: string; key?: string };
     } = {},
   ) {
     this.pool = this.createPool();
@@ -45,7 +45,8 @@ export class MysqlDriver implements DatabaseDriver {
       user: url.username,
       password: url.password,
       database: url.pathname.slice(1),
-      max: this.options.max ?? 20,
+      // mysql2 names it `connectionLimit`; `max` is ignored (and now warns).
+      connectionLimit: this.options.max ?? 20,
       idleTimeout: this.options.idleTimeoutMs ?? 10000,
       connectTimeout: this.options.connectionTimeoutMs ?? 5000,
       ssl: this.options.ssl || undefined,
@@ -64,10 +65,11 @@ export class MysqlDriver implements DatabaseDriver {
     }
   }
 
-  async execute(sql: string, params?: any[]): Promise<{ rowCount: number }> {
+  async execute(sql: string, params?: any[]): Promise<{ rowCount: number; insertId?: number }> {
     try {
       const [result] = await this.pool.query(sql, params);
-      return { rowCount: (result as any).affectedRows ?? 0 };
+      const header = result as { affectedRows?: number; insertId?: number };
+      return { rowCount: header.affectedRows ?? 0, insertId: header.insertId };
     } catch (error) {
       throw VaError.wrap(error, 'mysql execute');
     }

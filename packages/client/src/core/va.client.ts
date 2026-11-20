@@ -116,10 +116,18 @@ export class VaClient {
         const key = name.charAt(0).toLowerCase() + name.slice(1);
         const override = options.modelOptions?.[name] ?? options.modelOptions?.[key];
         const updatedAtField = override?.updatedAtField ?? findUpdatedAtField(options.schema, name);
+        const schemaModel = options.schema?.model.find(
+          (m) => m.name === name || m.name === key || m.name.toLowerCase() === name.toLowerCase(),
+        );
+        const primaryKey =
+          override?.primaryKey ??
+          schemaModel?.fields.find((f) => f.attributes.some((a) => a.name === '@id'))?.name ??
+          'id';
         this.repositories.set(
           name,
           new Repository(this.driver, model.tableName, {
             softDelete: model.softDelete,
+            primaryKey,
             ...(updatedAtField ? { updatedAtField } : {}),
           }),
         );
